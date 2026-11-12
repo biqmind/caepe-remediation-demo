@@ -1,0 +1,93 @@
+# Deliberately broken demo app for CAEPE scan -> recommendation -> remediation.
+# Image: upstream stefanprodan/podinfo. Redeploy in CAEPE to reset the faults.
+
+# Healthy app the Service and Ingress should point at.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo-web
+  labels:
+    app: podinfo-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: podinfo-web
+  template:
+    metadata:
+      labels:
+        app: podinfo-web
+    spec:
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.17.0
+          ports:
+            - containerPort: 9898
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+# FAULT 1: loads 128MB into memory but is limited to 64Mi -> OOMKilled / CrashLoopBackOff.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo-oom
+  labels:
+    app: podinfo-oom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: podinfo-oom
+  template:
+    metadata:
+      labels:
+        app: podinfo-oom
+    spec:
+      containers:
+        - name: podinfo
+          image: ghcr.io/stefanprodan/podinfo:6.17.0
+          command: ["./podinfo", "--port=9898", "--stress-memory=128"]
+          ports:
+            - containerPort: 9898
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+---
+# FAULT 2: selector label is misspelled, so the Service has no endpoints.
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo-web
+spec:
+  selector:
+    app: podinfo-wbe
+  ports:
+    - port: 80
+      targetPort: 9898
+---
+# FAULT 3: points at a Service that does not exist.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: podinfo-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /podinfo
+            pathType: Prefix
+            backend:
+              service:
+                name: podinfo-missing
+                port:
+                  number: 80
